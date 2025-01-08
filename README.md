@@ -24,42 +24,11 @@ The goal is to develop an AI that:
 
 ---
 
-## Project Structure
-
-ChessAI/
-│
-├── src/
-│   ├── ai/
-│   │   ├── reinforcement_learning.py    # RL algorithms
-│   │   ├── mcts.py                      # Monte Carlo Tree Search implementation
-│   │
-│   ├── chess_engine/
-│   │   ├── board.py                     # Chessboard representation
-│   │   ├── move_generator.py            # Generating legal moves
-│   │
-│   ├── interface/
-│       ├── pygame_ui.py                 # GUI based on pygame
-│
-├── data/
-│   ├── training_data/                   # Recorded games for analysis
-│   ├── models/                          # Saved AI models
-│
-├── tests/
-│   ├── test_ai.py                       # AI testing
-│   ├── test_ui.py                       # Interface testing
-│
-├── main.py                              # Main program entry point
-│
-└── README.md                            # Repository documentation
-
-
----
-
 ## Installation
 
 1. Clone the repository:
 
-    git clone https://github.com/yourusername/ChessAI.git
+    git clone https://github.com/Tomciom/ChessAI.git
     cd ChessAI
     
 
