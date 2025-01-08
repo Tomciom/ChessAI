@@ -1,0 +1,7 @@
+tensorflow
+numpy
+pandas
+python-chess
+pygame
+matplotlib
+pytest
