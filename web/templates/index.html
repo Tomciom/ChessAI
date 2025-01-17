@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>ChessAI</title>
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+        <!-- Ładowanie bibliotek z CDN -->
+        <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard.js/1.0.0/js/chessboard.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard.js/1.0.0/css/chessboard.min.css" />
+        <!-- Ładowanie własnego skryptu -->
+        <script src="{{ url_for('static', filename='js/chess_interface.js') }}"></script>
+      </head>
+<body>
+    <div id="board" style="width: 400px"></div>
+    <script>
+        var board = Chessboard('board', {
+            position: 'start'
+        });
+    </script>
+</body>
+</html>
