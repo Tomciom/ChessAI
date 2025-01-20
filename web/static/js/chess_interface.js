@@ -75,7 +75,22 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     function handleMove(source, target) {
-        const move = `${source}-${target}`;
+        let move = `${source}-${target}`;
+
+        const piece = board.position()[source];
+        if (piece) {
+            // Sprawdź, czy to jest biały pionek idący na 8. linię
+            if (piece === 'wP' && target[1] === '8') {
+                move += 'q'; // promujemy na hetmana
+            }
+            // Analogicznie – czarny pionek idący na 1. linię
+            else if (piece === 'bP' && target[1] === '1') {
+                move += 'q'; // promujemy na hetmana
+            }
+        }
+
+        console.log("Ruch wysyłany na serwer:", move);
+
         fetch('/move', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -86,13 +101,25 @@ document.addEventListener("DOMContentLoaded", function () {
             if (data.status === 'error') {
                 alert(data.message);
             } else {
-                board.position(data.new_fen);  // Ustaw nową pozycję na szachownicy
+                board.position(data.new_fen);
                 currentTurn = (currentTurn === 'white') ? 'black' : 'white';
                 if(data.checkmate) {
-                    // Opóźnienie alertu, aby dać czas na odświeżenie szachownicy
-                    setTimeout(() => {
-                        alert("Szach mat! Gra zakończona!");
-                    }, 250);
+                    setTimeout(() => { alert("Szach mat! Gra zakończona!"); }, 250);
+                } else {
+                    // Po udanym ruchu gracza, wywołaj ruch AI
+                    fetch('/ai_move')
+                      .then(response => response.json())
+                      .then(aiData => {
+                          if(aiData.status === 'success'){
+                              board.position(aiData.new_fen);
+                              currentTurn = (currentTurn === 'white') ? 'black' : 'white';
+                              if(aiData.checkmate) {
+                                  setTimeout(() => { alert("Szach mat! Gra zakończona!"); }, 250);
+                              }
+                          } else {
+                              alert(aiData.message);
+                          }
+                      });
                 }
             }
             clearHighlights();

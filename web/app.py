@@ -1,10 +1,24 @@
 from flask import Flask, render_template, request, jsonify
 import chess
 
+# Importujemy moduły związane z AI
+from ai.model import create_chess_model, load_model
+from ai.mcts import MCTSNode, mcts_search, select_action
+from ai.utils import encode_board
+
 app = Flask(__name__)
 
-# Initialize a global chess board
+# Inicjalizacja globalnej planszy szachowej
 board = chess.Board()
+
+# Próba załadowania wytrenowanego modelu, w przeciwnym razie tworzenie nowego
+try:
+    model = load_model('chess_model.h5')
+    print("Model załadowany.")
+except Exception as e:
+    print("Nie udało się załadować modelu:", e)
+    model = create_chess_model()
+    print("Utworzono nowy model.")
 
 @app.route('/')
 def index():
@@ -15,6 +29,7 @@ def handle_move():
     global board
     data = request.get_json()
     move = data.get('move')
+    print("Ruch odebrany od front-endu:", move)
 
     try:
         uci_move = chess.Move.from_uci(move.replace('-', ''))
@@ -26,6 +41,7 @@ def handle_move():
                 "new_fen": board.fen(),
                 "checkmate": is_checkmate
             }
+            print("Nowy FEN:", board.fen())
         else:
             response = {
                 "status": "error",
@@ -39,7 +55,6 @@ def handle_move():
 
     return jsonify(response)
 
-
 @app.route('/possible_moves', methods=['POST'])
 def possible_moves():
     global board
@@ -47,7 +62,6 @@ def possible_moves():
     square = data.get('square')
 
     try:
-        # Convert the square (e.g., 'e2') to the internal board index
         square_index = chess.parse_square(square)
         moves = [move for move in board.legal_moves if move.from_square == square_index]
         response = {
@@ -83,6 +97,35 @@ def restart():
     }
     return jsonify(response)
 
+@app.route('/ai_move', methods=['GET'])
+def ai_move():
+    """
+    Endpoint wykonujący ruch AI przy użyciu MCTS i modelu TensorFlow.
+    """
+    global board, model
+    if board.is_game_over():
+        return jsonify({"status": "error", "message": "Gra już zakończona."})
+
+    # Inicjalizacja korzenia drzewa MCTS z aktualnym stanem gry
+    root = MCTSNode(board.copy())
+
+    # Uruchomienie MCTS z określoną liczbą symulacji (możesz dostosować)
+    mcts_search(root, model, simulations=25, c_puct=1.0)
+
+    # Wybór najlepszego ruchu po przeszukaniu
+    best_move = select_action(root, temperature=0)
+
+    # Wykonanie ruchu na głównej planszy
+    board.push(best_move)
+
+    # Przygotowanie odpowiedzi
+    response = {
+        "status": "success",
+        "new_fen": board.fen(),
+        "ai_move": best_move.uci(),
+        "checkmate": board.is_checkmate()
+    }
+    return jsonify(response)
 
 if __name__ == '__main__':
     app.run(debug=True)
