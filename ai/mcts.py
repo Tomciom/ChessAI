@@ -1,110 +1,106 @@
+# ai/mcts.py
+
+import numpy as np
+import chess
+
+from ai.utils import encode_board
+from ai.move_mapping import MOVE_TO_INDEX, NUM_ACTIONS
+
 class MCTSNode:
     def __init__(self, state: chess.Board, parent=None):
-        self.state = state.copy()
+        self.state = state
         self.parent = parent
-        self.children = {}
+        self.children = {}  # move -> child Node
         self.visits = 0
-        self.value_sum = 0
+        self.value_sum = 0.0
         self.prior = 0.0
+        self.expanded = False
 
     def is_terminal(self):
         return self.state.is_game_over()
 
-    def is_fully_expanded(self):
-        legal_moves = list(self.state.legal_moves)
-        return len(self.children) == len(legal_moves)
+    def value(self):
+        return self.value_sum / self.visits if self.visits > 0 else 0
 
-    def expand(self, move, next_state, prior):
-        child_node = MCTSNode(next_state, parent=self)
-        child_node.prior = prior
-        self.children[move] = child_node
-        return child_node
+    def expand(self, policy_logits):
+        """
+        Rozbudowujemy węzeł, tworząc dzieci dla wszystkich legalnych ruchów.
+        policy_logits - wektor (NUM_ACTIONS,) wyjściowy z sieci dla tego stanu.
+        """
+        legal_moves = list(self.state.legal_moves)
+        mask = np.zeros(NUM_ACTIONS, dtype=np.float32)
+        for move in legal_moves:
+            if move in MOVE_TO_INDEX:
+                idx = MOVE_TO_INDEX[move]
+                mask[idx] = 1.0
+
+        masked_policy = policy_logits * mask
+        sum_policy = np.sum(masked_policy)
+        if sum_policy > 1e-12:
+            masked_policy /= sum_policy
+
+        for move in legal_moves:
+            if move in MOVE_TO_INDEX:
+                idx = MOVE_TO_INDEX[move]
+                p = masked_policy[idx]
+                next_state = self.state.copy()
+                next_state.push(move)
+                child_node = MCTSNode(next_state, parent=self)
+                child_node.prior = p
+                self.children[move] = child_node
+
+        self.expanded = True
 
     def update(self, value):
         self.visits += 1
         self.value_sum += value
 
-    def value(self):
-        if self.visits == 0:
-            return 0
-        return self.value_sum / self.visits
-
 def select_child(node: MCTSNode, c_puct=1.0):
     """
-    PUCT formula: Q + c_puct * P * sqrt(N) / (1 + n)
-      Q = child.value()
-      P = child.prior
-      N = node.visits
-      n = child.visits
+    Wybór dziecka z maksymalnym Q + U.
+    Q = child.value()
+    U = c_puct * child.prior * sqrt(node.visits) / (1 + child.visits)
     """
-    best_score = -float('inf')
-    best_move = None
-    best_child = None
+    best_score = -999999
+    best_move, best_child = None, None
 
+    sqrtN = np.sqrt(node.visits + 1e-8)
     for move, child in node.children.items():
         Q = child.value()
-        P = child.prior
-        N = node.visits
-        n = child.visits
-
-        uct = Q + c_puct * P * np.sqrt(N) / (1 + n)
-        if uct > best_score:
-            best_score = uct
+        U = c_puct * child.prior * sqrtN / (1 + child.visits)
+        score = Q + U
+        if score > best_score:
+            best_score = score
             best_move = move
             best_child = child
-
     return best_move, best_child
 
-
-def mcts_search(root: MCTSNode, model, simulations=200, c_puct=1.0):
+def backpropagate(path, value):
     """
-    Wykonuje MCTS z zadaną liczbą symulacji.
+    Propagujemy wartość w górę. 'value' jest z perspektywy
+    gracza, który jest "na ruchu" w liściu. Każde przejście w górę
+    zmienia perspektywę (value = -value).
+    """
+    for node in reversed(path):
+        node.update(value)
+        value = -value
+
+def mcts_search(root: MCTSNode, model, simulations=1600, c_puct=1.0):
+    """
+    Uruchamia MCTS z daną liczbą symulacji.
     """
     for _ in range(simulations):
         node = root
-        path = [node]
+        search_path = [node]
 
-        # 1. Selekcja
-        while node.is_fully_expanded() and not node.is_terminal():
+        # SELECTION
+        while node.expanded and not node.is_terminal():
             move, node = select_child(node, c_puct)
-            path.append(node)
+            search_path.append(node)
 
-        # 2. Ekspansja
-        if not node.is_terminal():
-            legal_moves = list(node.state.legal_moves)
-            for move in legal_moves:
-                if move not in node.children:
-                    next_state = node.state.copy()
-                    next_state.push(move)
-                    # Predykcja sieci (policy, value) dla next_state
-                    input_tensor = encode_board(next_state)[np.newaxis, ...]
-                    policy_pred, value_pred = model.predict(input_tensor, verbose=0)
-                    policy_pred = policy_pred[0]  # (4672,)
-                    value_pred = value_pred[0][0]
-
-                    # Maskowanie nielegalnych z perspektywy next_state
-                    next_legal_moves = list(next_state.legal_moves)
-                    mask = np.zeros_like(policy_pred)
-                    for lm in next_legal_moves:
-                        idx = MOVE_TO_INDEX[lm.uci()]
-                        mask[idx] = 1.0
-                    masked_policy = policy_pred * mask
-                    # Normalizacja
-                    sum_policy = np.sum(masked_policy)
-                    if sum_policy > 0:
-                        masked_policy /= sum_policy
-
-                    move_index = MOVE_TO_INDEX[move.uci()]
-                    prior = masked_policy[move_index]
-                    child = node.expand(move, next_state, prior)
-                    
-                    # Ocena węzła (dla tego jednego dziecka)
-                    node = child
-                    path.append(node)
-                    value = value_pred
-                    break
-        else:
-            # Stan terminalny
+        # EVALUATION
+        if node.is_terminal():
+            # Stan końcowy
             result = node.state.result()
             if result == '1-0':
                 value = 1
@@ -112,8 +108,37 @@ def mcts_search(root: MCTSNode, model, simulations=200, c_puct=1.0):
                 value = -1
             else:
                 value = 0
+            backpropagate(search_path, value)
+            continue
 
-        # 3. Backpropagation (aktualizacja)
-        for n in reversed(path):
-            n.update(value)
-            value = -value  # zmiana perspektywy (przeciwnik)
+        # Wywołujemy sieć dla stanu "node"
+        inp = encode_board(node.state)[np.newaxis, ...]
+        policy_logits, value_pred = model.predict(inp, verbose=0)
+        policy_logits = policy_logits[0]  # (NUM_ACTIONS,)
+        value_pred = value_pred[0][0]     # skalar
+
+        # EXPANSION
+        node.expand(policy_logits)
+
+        # BACKPROP
+        backpropagate(search_path, value_pred)
+
+def select_action(root: MCTSNode, temperature=1.0):
+    """
+    Wybieramy ruch z korzenia zgodnie z liczbą wizyt (child.visits).
+    """
+    if not root.children:
+        return None
+    visits = np.array([child.visits for child in root.children.values()], dtype=np.float32)
+    moves = list(root.children.keys())
+
+    if temperature < 1e-6:
+        # deterministycznie
+        idx = np.argmax(visits)
+        return moves[idx]
+    else:
+        # stochastycznie ~ visits^(1/T)
+        visits = visits ** (1.0 / temperature)
+        probs = visits / visits.sum()
+        idx = np.random.choice(len(moves), p=probs)
+        return moves[idx]

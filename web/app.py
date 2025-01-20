@@ -3,8 +3,11 @@ import chess
 
 # Importujemy moduły związane z AI
 from ai.model import create_chess_model, load_model
-from ai.mcts import MCTSNode, mcts_search, select_action
+from ai.mcts import MCTSNode, mcts_search
 from ai.utils import encode_board
+from ai.self_play import select_action
+from ai.move_mapping import NUM_ACTIONS  # np. 8000
+
 
 app = Flask(__name__)
 
@@ -13,11 +16,11 @@ board = chess.Board()
 
 # Próba załadowania wytrenowanego modelu, w przeciwnym razie tworzenie nowego
 try:
-    model = load_model('chess_model.h5')
+    model = load_model('chess_model.h5', num_actions=NUM_ACTIONS)
     print("Model załadowany.")
 except Exception as e:
     print("Nie udało się załadować modelu:", e)
-    model = create_chess_model()
+    model = create_chess_model(num_actions=NUM_ACTIONS)
     print("Utworzono nowy model.")
 
 @app.route('/')
@@ -128,4 +131,4 @@ def ai_move():
     return jsonify(response)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='192.168.137.168', port=3000, debug=True)
