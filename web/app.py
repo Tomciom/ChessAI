@@ -1,22 +1,19 @@
 from flask import Flask, render_template, request, jsonify
 import chess
 
-# Importujemy moduły związane z AI
 from ai.model import create_chess_model, load_model
 from ai.mcts import MCTSNode, mcts_search
 from ai.utils import encode_board
 from ai.self_play import select_action
-from ai.move_mapping import NUM_ACTIONS  # np. 8000
+from ai.move_mapping import NUM_ACTIONS
 
 
 app = Flask(__name__)
 
-# Inicjalizacja globalnej planszy szachowej
 board = chess.Board()
 
-# Próba załadowania wytrenowanego modelu, w przeciwnym razie tworzenie nowego
 try:
-    model = load_model('chess_model.h5', num_actions=NUM_ACTIONS)
+    model = load_model('best_model.weights.h5', num_actions=NUM_ACTIONS)
     print("Model załadowany.")
 except Exception as e:
     print("Nie udało się załadować modelu:", e)
@@ -37,8 +34,8 @@ def handle_move():
     try:
         uci_move = chess.Move.from_uci(move.replace('-', ''))
         if uci_move in board.legal_moves:
-            board.push(uci_move)  # Wykonaj ruch
-            is_checkmate = board.is_checkmate()  # Sprawdź, czy nastąpił szach-mat
+            board.push(uci_move)
+            is_checkmate = board.is_checkmate()
             response = {
                 "status": "success",
                 "new_fen": board.fen(),
@@ -92,7 +89,7 @@ def game_state():
 @app.route('/restart', methods=['POST'])
 def restart():
     global board
-    board = chess.Board()  # Reset planszy do pozycji startowej
+    board = chess.Board()
     response = {
         "status": "success",
         "fen": board.fen(),
@@ -109,19 +106,14 @@ def ai_move():
     if board.is_game_over():
         return jsonify({"status": "error", "message": "Gra już zakończona."})
 
-    # Inicjalizacja korzenia drzewa MCTS z aktualnym stanem gry
     root = MCTSNode(board.copy())
 
-    # Uruchomienie MCTS z określoną liczbą symulacji (możesz dostosować)
     mcts_search(root, model, simulations=25, c_puct=1.0)
 
-    # Wybór najlepszego ruchu po przeszukaniu
     best_move = select_action(root, temperature=0)
 
-    # Wykonanie ruchu na głównej planszy
     board.push(best_move)
 
-    # Przygotowanie odpowiedzi
     response = {
         "status": "success",
         "new_fen": board.fen(),
@@ -131,4 +123,4 @@ def ai_move():
     return jsonify(response)
 
 if __name__ == '__main__':
-    app.run(host='192.168.137.168', port=3000, debug=True)
+    app.run(debug=True)

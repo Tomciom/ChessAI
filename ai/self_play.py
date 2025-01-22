@@ -1,5 +1,3 @@
-# ai/self_play.py
-
 import numpy as np
 import chess
 
@@ -31,8 +29,7 @@ def self_play_game(model, simulations_per_move=200, temperature=1.0):
         root = MCTSNode(board.copy())
         mcts_search(root, model, simulations=simulations_per_move, c_puct=1.0)
 
-        # Liczba wizyt -> policy target
-        children_items = list(root.children.items())  # (move, child)
+        children_items = list(root.children.items())
         visits = np.array([child.visits for (_, child) in children_items], dtype=np.float32)
         sum_visits = visits.sum()
 
@@ -43,19 +40,16 @@ def self_play_game(model, simulations_per_move=200, temperature=1.0):
                 if idx is not None:
                     policy_target[idx] = v / sum_visits
 
-        # Zapis stanu (bez value - dodamy na końcu)
         state_tensor = encode_board(board)
         states_actions.append((state_tensor, policy_target))
 
-        # Wybór ruchu
         move = select_action(root, temperature)
         if move is None:
             break
         board.push(move)
         move_count += 1
 
-    # Określamy wynik końcowy
-    result = board.result()  # '1-0', '0-1' albo '1/2-1/2'
+    result = board.result()
     if result == '1-0':
         outcome = 1
     elif result == '0-1':
@@ -63,10 +57,8 @@ def self_play_game(model, simulations_per_move=200, temperature=1.0):
     else:
         outcome = 0
 
-    # Każdy stan przypisujemy do perspektywy gracza, który był na ruchu
-    # i = 0 -> biały, i=1 -> czarny, ...
     final_data = []
-    player = 1  # białe = +1, czarne = -1
+    player = 1
     for (st, pol) in states_actions:
         val = outcome if player == 1 else -outcome
         final_data.append((st, pol, val))
@@ -103,7 +95,6 @@ def play_match(modelA, modelB, games=4, simulations_per_move=100):
     scoreB = 0.0
     half = games // 2
 
-    # Pierwsza połowa: A białe, B czarne
     for _ in range(half):
         res = play_single_game(modelA, modelB, simulations_per_move)
         if res > 0:
@@ -114,7 +105,6 @@ def play_match(modelA, modelB, games=4, simulations_per_move=100):
             scoreA += 0.5
             scoreB += 0.5
 
-    # Druga połowa: B białe, A czarne
     for _ in range(games - half):
         res = play_single_game(modelB, modelA, simulations_per_move)
         if res > 0:

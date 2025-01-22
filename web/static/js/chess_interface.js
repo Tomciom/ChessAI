@@ -5,41 +5,34 @@ document.addEventListener("DOMContentLoaded", function () {
     let selectedSquare = null;
     let possibleMoves = [];
 
-    // Inicjalizacja szachownicy
     const board = Chessboard('board1', {
-        position: 'start', // chwilowo ustawiamy pozycję startową; nadpiszemy ją stanem z serwera
+        position: 'start',
         pieceTheme: function (piece) {
             return `static/img/chesspieces/wikipedia/${piece}.png`;
         }
     });
 
-    // Pobierz stan gry z serwera po załadowaniu strony
     fetch('/game_state')
         .then(response => response.json())
         .then(data => {
             if(data.status === 'success') {
-                currentTurn = data.currentTurn;  // ustawienie aktualnej tury z serwera
-                board.position(data.fen);        // ustawienie pozycji na szachownicy zgodnie z FEN z serwera
+                currentTurn = data.currentTurn;
+                board.position(data.fen);
             } else {
                 alert("Nie udało się załadować stanu gry.");
             }
         })
         .catch(error => console.error('Error przy pobieraniu stanu gry:', error));
 
-    // Delegacja zdarzeń - nasłuchujemy kliknięć na elementach .square-55d63
     $('#board1').on('click', '.square-55d63', function() {
-        // Używamy klasy, aby uzyskać kwadrat, ponieważ elementy szachownicy mogą nie mieć atrybutu data-square.
-        // Zakładam, że klasy pól mają format .square-a1, .square-b2 itd.
         const classes = $(this).attr('class').split(/\s+/);
         const squareClass = classes.find(c => /^square-[a-h][1-8]$/.test(c));
         const square = squareClass ? squareClass.replace('square-', '') : null;
         
-        if(!square) return;  // jeżeli nie znaleziono pola, zakończ działanie
-
-        const piece = board.position()[square];  // Pobierz figurę z klikniętego pola
+        if(!square) return;
+        const piece = board.position()[square];
         console.log("Kliknięto pole:", square, "Figura:", piece);
         
-        // Logika po kliknięciu:
         if (selectedSquare) {
             if (possibleMoves.includes(square)) {
                 handleMove(selectedSquare, square);
@@ -79,13 +72,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const piece = board.position()[source];
         if (piece) {
-            // Sprawdź, czy to jest biały pionek idący na 8. linię
             if (piece === 'wP' && target[1] === '8') {
-                move += 'q'; // promujemy na hetmana
+                move += 'q';
             }
-            // Analogicznie – czarny pionek idący na 1. linię
             else if (piece === 'bP' && target[1] === '1') {
-                move += 'q'; // promujemy na hetmana
+                move += 'q';
             }
         }
 
@@ -106,7 +97,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 if(data.checkmate) {
                     setTimeout(() => { alert("Szach mat! Gra zakończona!"); }, 250);
                 } else {
-                    // Po udanym ruchu gracza, wywołaj ruch AI
                     fetch('/ai_move')
                       .then(response => response.json())
                       .then(aiData => {
@@ -151,7 +141,6 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 });
 
-// Obsługa kliknięcia przycisku Restart
 document.getElementById('restartButton').addEventListener('click', function() {
     fetch('/restart', {
         method: 'POST',
@@ -160,7 +149,6 @@ document.getElementById('restartButton').addEventListener('click', function() {
     .then(response => response.json())
     .then(data => {
         if(data.status === 'success') {
-            // Odśwież stronę po pomyślnym restarcie
             window.location.reload();
         } else {
             alert("Nie udało się zrestartować gry.");

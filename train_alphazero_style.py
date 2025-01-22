@@ -1,5 +1,3 @@
-# train_alphazero_style.py
-
 import os
 import numpy as np
 import tensorflow as tf
@@ -18,38 +16,31 @@ def train_alphazero_style(
     replay_buffer_max=50000,
     comparison_games=4,
     comparison_threshold=0.55,
-    save_path="best_model.h5"
+    save_path="best_model.weights.h5"
 ):
-    """
-    Główna pętla treningu.
-    """
-    # 1. Wczytanie / stworzenie modelu
     if os.path.exists(save_path):
         best_model = load_model(save_path, num_actions=NUM_ACTIONS)
     else:
-        # Tworzymy nowy model z właściwą liczbą akcji
         best_model = create_chess_model(num_actions=NUM_ACTIONS)
-    # 2. Bufor powtórek
+
     replay_buffer = ReplayBuffer(replay_buffer_max)
 
     for iteration in range(num_iterations):
         print(f"\n=== Iteracja {iteration+1}/{num_iterations} ===")
 
-        # A. Generowanie partii self-play
         print("-> Generowanie partii self-play...")
         new_data = []
         for _ in range(games_per_iteration):
             game_data = self_play_game(
                 best_model,
                 simulations_per_move=simulations_per_move,
-                temperature=1.0 if iteration < 5 else 0.1  # np. wczesne iteracje bardziej stochastic
+                temperature=1.0 if iteration < 5 else 0.1
             )
             new_data.extend(game_data)
 
         replay_buffer.add_samples(new_data)
         print(f"Aktualny rozmiar bufora: {len(replay_buffer)}")
 
-        # B. Trening kandydata (klon best_model -> candidate_model)
         print("-> Tworzenie kandydata i trening...")
         candidate_model = tf.keras.models.clone_model(best_model)
         candidate_model.build((None, 8, 8, 12))
@@ -60,7 +51,6 @@ def train_alphazero_style(
             loss_weights={'policy': 1.0, 'value': 1.0}
         )
 
-        # Pobieramy wszystkie dane z bufora
         all_data = replay_buffer.sample_all()
         X = np.array([s for (s, p, v) in all_data])
         Y_policy = np.array([p for (s, p, v) in all_data])
@@ -69,12 +59,11 @@ def train_alphazero_style(
         candidate_model.fit(
             X,
             {"policy": Y_policy, "value": Y_value},
-            epochs=1,  # np. 1-5
+            epochs=5,
             batch_size=64,
             verbose=1
         )
 
-        # C. Porównanie (kandydat vs best)
         print("-> Porównanie kandydata z best_model...")
         score_cand, score_best = play_match(candidate_model, best_model,
                                             games=comparison_games,
@@ -89,7 +78,6 @@ def train_alphazero_style(
         else:
             print("-> Kandydat odrzucony, pozostajemy przy starym best_model.")
 
-        # Zapis
         save_model(best_model, save_path)
 
     return best_model
@@ -97,11 +85,11 @@ def train_alphazero_style(
 
 if __name__ == "__main__":
     final_model = train_alphazero_style(
-        num_iterations=1,
+        num_iterations=25,
         games_per_iteration=5,
         simulations_per_move=25,
         replay_buffer_max=10000,
         comparison_games=4,
         comparison_threshold=0.55,
-        save_path="best_model.h5"
+        save_path="best_model.weights.h5"
     )

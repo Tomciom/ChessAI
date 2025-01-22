@@ -17,10 +17,9 @@ The goal is to develop an AI that:
 
 ## Technology and Tools
 
-- **AI and Machine Learning**: TensorFlow, NumPy, Pandas  
+- **AI and Machine Learning**: TensorFlow, NumPy
 - **Chess Logic**: python-chess  
-- **Web Interface**: Chessboard.js + Flask/FastAPI (future stages)  
-- **Result Visualization**: Matplotlib, TensorBoard  
+- **Web Interface**: Chessboard.js + Flask
 - **Testing**: Pytest  
 
 ---
@@ -45,7 +44,7 @@ The goal is to develop an AI that:
 3. Run the user interface for a simple game against the AI:
 
     ```bash
-    python main.py
+    python -m web.app
     ```
 
 ---

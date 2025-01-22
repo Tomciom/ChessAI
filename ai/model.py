@@ -1,7 +1,8 @@
-# ai/model.py
-
 import tensorflow as tf
 from tensorflow.keras import layers, models
+
+from tensorflow.keras import mixed_precision
+mixed_precision.set_global_policy('mixed_float16')
 
 def residual_block(x, filters=64):
     shortcut = x
@@ -12,11 +13,6 @@ def residual_block(x, filters=64):
     return x
 
 def create_chess_model(input_shape=(8, 8, 12), num_actions=8000, num_filters=64, num_res_blocks=8):
-    """
-    Przykładowy model w stylu AlphaZero.
-    Argumenty:
-      - num_actions -> ustalamy według move_mapping.NUM_ACTIONS
-    """
     inputs = layers.Input(shape=input_shape)
     x = layers.Conv2D(num_filters, 3, padding='same', activation='relu')(inputs)
 
@@ -43,9 +39,6 @@ def save_model(model, path):
     model.save_weights(path)
 
 def load_model(path, num_actions):
-    """
-    Wczytanie wag do modelu o zadanym num_actions.
-    """
     model = create_chess_model(num_actions=num_actions)
     model.load_weights(path)
     return model
