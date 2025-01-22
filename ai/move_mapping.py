@@ -6,9 +6,6 @@ def square_to_rc(sq: int):
     return (row, col)
 
 def rc_to_square(row: int, col: int):
-    """
-    Odwrotna konwersja: (row, col) -> sq 0..63 (python-chess).
-    """
     return (7 - row) * 8 + col
 
 SLIDING_DIRECTIONS = [
