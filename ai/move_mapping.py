@@ -1,198 +1,71 @@
 import chess
 
-def square_to_rc(sq: int):
-    row = 7 - (sq // 8)
-    col = sq % 8
-    return (row, col)
+QUEEN_DIRECTIONS = [(dr, dc) for dr in [-1, 0, 1] for dc in [-1, 0, 1] if not (dr == 0 and dc == 0)] 
+KNIGHT_DIRECTIONS = [(dr, dc) for dr in [-2, -1, 1, 2] for dc in [-2, -1, 1, 2] if abs(dr) != abs(dc)] 
 
-def rc_to_square(row: int, col: int):
-    return (7 - row) * 8 + col
+NUM_QUEEN_MOVES = 7 * len(QUEEN_DIRECTIONS)
+NUM_KNIGHT_MOVES = len(KNIGHT_DIRECTIONS)
+NUM_PROMOTIONS = 3 * 3 
 
-SLIDING_DIRECTIONS = [
-    (1, 0),
-    (-1, 0),
-    (0, 1),
-    (0, -1),
-    (1, 1),
-    (1, -1),
-    (-1, 1),
-    (-1, -1)
-]
+NUM_PLANES = NUM_QUEEN_MOVES + NUM_KNIGHT_MOVES + NUM_PROMOTIONS 
+NUM_ACTIONS = NUM_PLANES * 64 
 
-# Ruchy skoczka
-KNIGHT_OFFSETS = [
-    (2, 1), (2, -1), (-2, 1), (-2, -1),
-    (1, 2), (1, -2), (-1, 2), (-1, -2)
-]
+MOVE_TO_INDEX = {}
+INDEX_TO_MOVE = {}
 
-PROMOTION_PIECES = [chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT]
+def _rc_to_square(r, c):
+    return (7 - r) * 8 + c
 
-def create_action_planes():
+def _square_to_rc(sq):
+    return 7 - (sq // 8), sq % 8
 
-    MOVE_TO_INDEX = {}
-    INDEX_TO_MOVE = {}
-
-    plane_index = 0
-
-    for from_sq in range(64):
-        from_r, from_c = square_to_rc(from_sq)
-        to_r = from_r - 1
-        to_c = from_c
-        if 0 <= to_r < 8 and 0 <= to_c < 8:
-            to_sq = rc_to_square(to_r, to_c)
-            move = chess.Move(from_sq, to_sq)
-            index = plane_index * 64 + from_sq
-            MOVE_TO_INDEX[move] = index
-            INDEX_TO_MOVE[index] = move
-    plane_index += 1
-
-    for from_sq in range(64):
-        from_r, from_c = square_to_rc(from_sq)
-        to_r = from_r - 2
-        to_c = from_c
-        if 0 <= to_r < 8:
-            to_sq = rc_to_square(to_r, to_c)
-            move = chess.Move(from_sq, to_sq)
-            index = plane_index * 64 + from_sq
-            MOVE_TO_INDEX[move] = index
-            INDEX_TO_MOVE[index] = move
-    plane_index += 1
-
-    for from_sq in range(64):
-        from_r, from_c = square_to_rc(from_sq)
-        to_r = from_r - 1
-        to_c = from_c - 1
-        if 0 <= to_r < 8 and 0 <= to_c < 8:
-            to_sq = rc_to_square(to_r, to_c)
-            move = chess.Move(from_sq, to_sq)
-            index = plane_index * 64 + from_sq
-            MOVE_TO_INDEX[move] = index
-            INDEX_TO_MOVE[index] = move
-    plane_index += 1
-
-    for from_sq in range(64):
-        from_r, from_c = square_to_rc(from_sq)
-        to_r = from_r - 1
-        to_c = from_c + 1
-        if 0 <= to_r < 8 and 0 <= to_c < 8:
-            to_sq = rc_to_square(to_r, to_c)
-            move = chess.Move(from_sq, to_sq)
-            index = plane_index * 64 + from_sq
-            MOVE_TO_INDEX[move] = index
-            INDEX_TO_MOVE[index] = move
-    plane_index += 1
-
-    for from_sq in range(64):
-        from_r, from_c = square_to_rc(from_sq)
-        to_r = from_r - 1
-        to_c = from_c - 1
-        if 0 <= to_r < 8 and 0 <= to_c < 8:
-            to_sq = rc_to_square(to_r, to_c)
-            move = chess.Move(from_sq, to_sq)
-            index = plane_index * 64 + from_sq
-            MOVE_TO_INDEX[move] = index
-            INDEX_TO_MOVE[index] = move
-    plane_index += 1
-
-    for from_sq in range(64):
-        from_r, from_c = square_to_rc(from_sq)
-        to_r = from_r - 1
-        to_c = from_c + 1
-        if 0 <= to_r < 8 and 0 <= to_c < 8:
-            to_sq = rc_to_square(to_r, to_c)
-            move = chess.Move(from_sq, to_sq)
-            index = plane_index * 64 + from_sq
-            MOVE_TO_INDEX[move] = index
-            INDEX_TO_MOVE[index] = move
-    plane_index += 1
-
-    for promo_piece in PROMOTION_PIECES:
+plane = 0
+for dr, dc in QUEEN_DIRECTIONS:
+    for length in range(1, 8):
         for from_sq in range(64):
-            from_r, from_c = square_to_rc(from_sq)
-            to_r = from_r - 1
-            to_c = from_c
+            r, c = _square_to_rc(from_sq)
+            to_r, to_c = r + dr * length, c + dc * length
             if 0 <= to_r < 8 and 0 <= to_c < 8:
-                to_sq = rc_to_square(to_r, to_c)
-                move = chess.Move(from_sq, to_sq, promotion=promo_piece)
-                index = plane_index * 64 + from_sq
-                MOVE_TO_INDEX[move] = index
-                INDEX_TO_MOVE[index] = move
-        plane_index += 1
-
-    for promo_piece in PROMOTION_PIECES:
-        for from_sq in range(64):
-            from_r, from_c = square_to_rc(from_sq)
-            to_r = from_r - 1
-            to_c = from_c - 1
-            if 0 <= to_r < 8 and 0 <= to_c < 8:
-                to_sq = rc_to_square(to_r, to_c)
-                move = chess.Move(from_sq, to_sq, promotion=promo_piece)
-                index = plane_index * 64 + from_sq
-                MOVE_TO_INDEX[move] = index
-                INDEX_TO_MOVE[index] = move
-        plane_index += 1
-
-    for promo_piece in PROMOTION_PIECES:
-        for from_sq in range(64):
-            from_r, from_c = square_to_rc(from_sq)
-            to_r = from_r - 1
-            to_c = from_c + 1
-            if 0 <= to_r < 8 and 0 <= to_c < 8:
-                to_sq = rc_to_square(to_r, to_c)
-                move = chess.Move(from_sq, to_sq, promotion=promo_piece)
-                index = plane_index * 64 + from_sq
-                MOVE_TO_INDEX[move] = index
-                INDEX_TO_MOVE[index] = move
-        plane_index += 1
-
-    for (dr, dc) in KNIGHT_OFFSETS:
-        for from_sq in range(64):
-            from_r, from_c = square_to_rc(from_sq)
-            to_r = from_r + dr
-            to_c = from_c + dc
-            if 0 <= to_r < 8 and 0 <= to_c < 8:
-                to_sq = rc_to_square(to_r, to_c)
+                to_sq = _rc_to_square(to_r, to_c)
+                index = plane * 64 + from_sq
+                
                 move = chess.Move(from_sq, to_sq)
-                index = plane_index * 64 + from_sq
                 MOVE_TO_INDEX[move] = index
                 INDEX_TO_MOVE[index] = move
-        plane_index += 1
 
-    for (dr, dc) in SLIDING_DIRECTIONS:
-        for steps in range(1, 8):
-            for from_sq in range(64):
-                from_r, from_c = square_to_rc(from_sq)
-                to_r = from_r + dr*steps
-                to_c = from_c + dc*steps
-                if 0 <= to_r < 8 and 0 <= to_c < 8:
-                    to_sq = rc_to_square(to_r, to_c)
-                    move = chess.Move(from_sq, to_sq)
-                    index = plane_index * 64 + from_sq
-                    MOVE_TO_INDEX[move] = index
-                    INDEX_TO_MOVE[index] = move
-            plane_index += 1
+                if chess.square_rank(from_sq) == 6 and chess.square_rank(to_sq) == 7:
+                     promo_move = chess.Move(from_sq, to_sq, promotion=chess.QUEEN)
+                     MOVE_TO_INDEX[promo_move] = index
 
-    for from_sq in [chess.E1, chess.E8]:
-        to_sq = from_sq + 2
-        move = chess.Move(from_sq, to_sq)
-        index = plane_index * 64 + from_sq
-        MOVE_TO_INDEX[move] = index
-        INDEX_TO_MOVE[index] = move
-    plane_index += 1
+        plane += 1
 
-    for from_sq in [chess.E1, chess.E8]:
-        to_sq = from_sq - 2
-        move = chess.Move(from_sq, to_sq)
-        index = plane_index * 64 + from_sq
-        MOVE_TO_INDEX[move] = index
-        INDEX_TO_MOVE[index] = move
-    plane_index += 1
+for dr, dc in KNIGHT_DIRECTIONS:
+    for from_sq in range(64):
+        r, c = _square_to_rc(from_sq)
+        to_r, to_c = r + dr, c + dc
+        if 0 <= to_r < 8 and 0 <= to_c < 8:
+            to_sq = _rc_to_square(to_r, to_c)
+            index = plane * 64 + from_sq
+            move = chess.Move(from_sq, to_sq)
+            MOVE_TO_INDEX[move] = index
+            INDEX_TO_MOVE[index] = move
+    plane += 1
 
-    num_planes = plane_index
-    num_actions = num_planes * 64
+PROMOTION_PIECES = [chess.KNIGHT, chess.BISHOP, chess.ROOK]
+PROMO_DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1)] 
 
-    print(f"[move_mapping] Planes = {num_planes}, total actions = {num_actions}")
+for piece in PROMOTION_PIECES:
+    for dr, dc in PROMO_DIRECTIONS:
+         for from_sq in range(8, 16):
+            r, c = _square_to_rc(from_sq)
+            to_r, to_c = r + dr, c + dc
+            if 0 <= to_c < 8:
+                to_sq = _rc_to_square(to_r, to_c)
+                index = plane * 64 + from_sq
+                move = chess.Move(from_sq, to_sq, promotion=piece)
+                MOVE_TO_INDEX[move] = index
+                INDEX_TO_MOVE[index] = move
+         plane += 1
 
-    return MOVE_TO_INDEX, INDEX_TO_MOVE, num_actions
-
-MOVE_TO_INDEX, INDEX_TO_MOVE, NUM_ACTIONS = create_action_planes()
+print(f"[move_mapping] Stworzono mapowanie: Płaszczyzn = {NUM_PLANES}, Akcji = {NUM_ACTIONS}")
+print(f"Rzeczywisty rozmiar słownika MOVE_TO_INDEX: {len(MOVE_TO_INDEX)}")

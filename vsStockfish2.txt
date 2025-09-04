@@ -1,0 +1,13 @@
+============================================================
+=========== WYNIKI MECZU (ZDEFINIOWANE OTWARCIA) ===========
+Liczba partii: 10
+Przeciwnik: Stockfish 2 (Poziom: {'depth': 2})
+Wyrocznia: Nowoczesny Stockfish (Poziom: {'depth': 10})
+Całkowity czas benchmarku: 247.81 s (4.13 min)
+Zwycięstwa CHESSAI: 0    (  0.0%)
+Porażki CHESSAI:   10   (100.0%)
+Remisy:            0    (  0.0%)
+--- Średnia jakość gry CHESSAI ---
+Top-1 Accuracy: 30.78%
+Top-3 Accuracy: 54.75%
+Śr. utrata centypionów (ACPL): 98.63

@@ -170,3 +170,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# TensorFlow environment
+/tf-env 
+/tablebases
+lichess_final_filtered.pgn

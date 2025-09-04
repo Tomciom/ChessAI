@@ -1,0 +1,11 @@
+============================================================
+=========== WYNIKI MECZU (ZDEFINIOWANE OTWARCIA) ===========
+============================================================
+Liczba partii: 10
+Przeciwnik: Stockfish 17.1 niskie(Limit: {'depth': 1, 'nodes': 1})
+Wyrocznia: Nowoczesny Stockfish (Poziom: {'depth': 10})
+Całkowity czas benchmarku: 458.52 s (7.64 min)
+------------------------------------------------------------
+Zwycięstwa CHESSAI: 1    ( 10.0%)
+Porażki CHESSAI:   7    ( 70.0%)
+Remisy:            2    ( 20.0%)

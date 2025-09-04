@@ -4,6 +4,7 @@ document.addEventListener("DOMContentLoaded", function () {
     let currentTurn;
     let selectedSquare = null;
     let possibleMoves = [];
+    let isGameOver = false;
 
     const board = Chessboard('board1', {
         position: 'start',
@@ -12,12 +13,20 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
+    function checkGameOver(data) {
+        if (data.game_over) {
+            isGameOver = true;
+            setTimeout(() => { alert(data.game_over_message); }, 250);
+        }
+    }
+
     fetch('/game_state')
         .then(response => response.json())
         .then(data => {
             if(data.status === 'success') {
                 currentTurn = data.currentTurn;
                 board.position(data.fen);
+                checkGameOver({ game_over: data.fen.includes(' ') && data.fen.split(' ').slice(1).join(' ') === 'w KQkq - 0 1' ? false : new chess.Chess(data.fen).isGameOver(), game_over_message: 'Gra zakończona.' });
             } else {
                 alert("Nie udało się załadować stanu gry.");
             }
@@ -25,6 +34,8 @@ document.addEventListener("DOMContentLoaded", function () {
         .catch(error => console.error('Error przy pobieraniu stanu gry:', error));
 
     $('#board1').on('click', '.square-55d63', function() {
+        if (isGameOver) return;
+
         const classes = $(this).attr('class').split(/\s+/);
         const squareClass = classes.find(c => /^square-[a-h][1-8]$/.test(c));
         const square = squareClass ? squareClass.replace('square-', '') : null;
@@ -69,15 +80,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
     function handleMove(source, target) {
         let move = `${source}-${target}`;
-
         const piece = board.position()[source];
-        if (piece) {
-            if (piece === 'wP' && target[1] === '8') {
-                move += 'q';
-            }
-            else if (piece === 'bP' && target[1] === '1') {
-                move += 'q';
-            }
+        if (piece && ((piece === 'wP' && target[1] === '8') || (piece === 'bP' && target[1] === '1'))) {
+            move += 'q';
         }
 
         console.log("Ruch wysyłany na serwer:", move);
@@ -94,18 +99,16 @@ document.addEventListener("DOMContentLoaded", function () {
             } else {
                 board.position(data.new_fen);
                 currentTurn = (currentTurn === 'white') ? 'black' : 'white';
-                if(data.checkmate) {
-                    setTimeout(() => { alert("Szach mat! Gra zakończona!"); }, 250);
-                } else {
+                checkGameOver(data);
+
+                if (!isGameOver) {
                     fetch('/ai_move')
                       .then(response => response.json())
                       .then(aiData => {
                           if(aiData.status === 'success'){
                               board.position(aiData.new_fen);
                               currentTurn = (currentTurn === 'white') ? 'black' : 'white';
-                              if(aiData.checkmate) {
-                                  setTimeout(() => { alert("Szach mat! Gra zakończona!"); }, 250);
-                              }
+                              checkGameOver(aiData); 
                           } else {
                               alert(aiData.message);
                           }
@@ -116,7 +119,6 @@ document.addEventListener("DOMContentLoaded", function () {
         })
         .catch(error => console.error('Error:', error));
     }
-    
     
     function isCurrentPlayerPiece(piece) {
         return (currentTurn === 'white' && piece.startsWith('w')) ||
@@ -156,5 +158,3 @@ document.getElementById('restartButton').addEventListener('click', function() {
     })
     .catch(error => console.error('Błąd przy restarcie:', error));
 });
-
-

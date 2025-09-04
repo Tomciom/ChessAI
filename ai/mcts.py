@@ -24,6 +24,7 @@ class MCTSNode:
         self.value_sum = 0.0
         self.prior = 0.0
         self.expanded = False
+        self.virtual_loss = 0
 
     def is_terminal(self):
         return self.state.is_game_over()
@@ -82,15 +83,15 @@ class MCTSNode:
         self.visits += 1
         self.value_sum += value
 
-
 def select_child(node: MCTSNode, c_puct=1.0):
     best_score = -999999
     best_move, best_child = None, None
 
-    sqrtN = np.sqrt(node.visits + 1e-8)
+    sqrtN_parent = np.sqrt(node.visits + 1e-8)
+
     for move, child in node.children.items():
-        Q = child.value()
-        U = c_puct * child.prior * sqrtN / (1 + child.visits)
+        Q = child.value() - child.virtual_loss
+        U = c_puct * child.prior * sqrtN_parent / (1 + child.visits)
         score = Q + U
         if score > best_score:
             best_score = score
@@ -101,40 +102,48 @@ def select_child(node: MCTSNode, c_puct=1.0):
 def backpropagate(path, value):
     for node in reversed(path):
         node.update(value)
+        node.virtual_loss -= 1 
         value = -value
 
+def mcts_search(root: MCTSNode, model, simulations=1600, c_puct=1.0, mcts_batch_size=8):
+    for _ in range(simulations // mcts_batch_size):
+        leaf_nodes_to_expand = []
+        paths = []
 
-def mcts_search(root: MCTSNode, model, simulations=1600, c_puct=1.0):
-    for _ in range(simulations):
-        node = root
-        path = [node]
+        for _ in range(mcts_batch_size):
+            node = root
+            path = [node]
 
-        while node.expanded and not node.is_terminal():
-            move, next_node = select_child(node, c_puct)
-            if next_node is None:
-                break
-            path.append(next_node)
-            node = next_node
-
-        if node.is_terminal():
-            result = node.state.result()
-            if result == '1-0':
-                value = 1
-            elif result == '0-1':
-                value = -1
+            while node.expanded and not node.is_terminal():
+                move, next_node = select_child(node, c_puct)
+                if next_node is None:
+                    break
+                node.virtual_loss += 1
+                path.append(next_node)
+                node = next_node
+            
+            if not node.is_terminal():
+                leaf_nodes_to_expand.append(node)
+                paths.append(path)
             else:
-                value = 0
-            backpropagate(path, value)
+                result = node.state.result()
+                if result == '1-0': value = 1
+                elif result == '0-1': value = -1
+                else: value = 0
+                backpropagate(path, value)
+
+        if not leaf_nodes_to_expand:
             continue
 
-        inp = encode_board_perspective(node.state)[np.newaxis, ...]
-        policy_logits, value_pred = model.predict(inp, verbose=0)
-        policy_logits = policy_logits[0]
-        value_pred = value_pred[0][0]
+        states_batch = np.array([encode_board_perspective(n.state) for n in leaf_nodes_to_expand])
+        policy_batch, value_batch = model.predict(states_batch, verbose=0)
 
-        node.expand(policy_logits)
-
-        backpropagate(path, value_pred)
+        for i, leaf_node in enumerate(leaf_nodes_to_expand):
+            policy_logits = policy_batch[i]
+            value_pred = value_batch[i][0]
+            
+            leaf_node.expand(policy_logits)
+            backpropagate(paths[i], value_pred)
 
 def select_action(root: MCTSNode, temperature=1.0):
     if not root.children:
@@ -146,7 +155,7 @@ def select_action(root: MCTSNode, temperature=1.0):
         idx = np.argmax(visits)
         return moves[idx]
     else:
-        visits = visits ** (1.0 / temperature)
+        visits = np.power(visits, 1.0 / temperature)
         probs = visits / visits.sum()
         idx = np.random.choice(len(moves), p=probs)
         return moves[idx]
