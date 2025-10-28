@@ -5,13 +5,10 @@ from ai.utils import encode_board_perspective
 from ai.move_mapping import MOVE_TO_INDEX, NUM_ACTIONS
 
 
-def flip_square(sq: int) -> int:
-    return 63 - sq
-
 def flip_move(move: chess.Move) -> chess.Move:
     return chess.Move(
-        flip_square(move.from_square),
-        flip_square(move.to_square),
+        from_square=chess.square_mirror(move.from_square),
+        to_square=chess.square_mirror(move.to_square),
         promotion=move.promotion
     )
 
