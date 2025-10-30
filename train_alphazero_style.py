@@ -1,12 +1,21 @@
 import os
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+
 import numpy as np
 import tensorflow as tf
+
+tf.config.run_functions_eagerly(True)
+
 import multiprocessing
 from tqdm import tqdm
 import chess
 import chess.syzygy
 import json
+import pickle
 
+# Ustawienie memory growth dla GPU, aby uniknąć problemów z pamięcią
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
@@ -16,19 +25,21 @@ if gpus:
     except RuntimeError as e:
         print(e)
 
+# Importowanie modułów z projektu
 from ai.model import create_chess_model, save_model, load_model
 from ai.self_play import self_play_game, ReplayBuffer
 from ai.move_mapping import NUM_ACTIONS
 from ai.mcts import MCTSNode, mcts_search, select_action
 from ai.knowledge import get_endgame_move, get_opening_move 
 
-
-
+# Definicje workerów do multiprocessing
 def run_self_play_worker(args):
-    model_weights, simulations_per_move, temperature, mcts_batch_size, num_actions = args
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+    import tensorflow as tf # Re-import jest często potrzebny
+    model_weights, simulations_per_move, mcts_batch_size, num_actions = args
     worker_model = create_chess_model(num_actions=num_actions)
     worker_model.set_weights(model_weights)
-    return self_play_game(worker_model, simulations_per_move, temperature, mcts_batch_size)
+    return self_play_game(worker_model, simulations_per_move, mcts_batch_size=mcts_batch_size)
 
 def run_comparison_worker(args):
     model_A_weights, model_B_weights, simulations_per_move, mcts_batch_size, num_actions, a_is_white = args
@@ -50,7 +61,7 @@ def run_comparison_worker(args):
     model_white, model_black = (model_A, model_B) if a_is_white else (model_B, model_A)
     
     board = chess.Board()
-    while not board.is_game_over():
+    while not board.is_game_over(claim_draw=True):
         move = None
         
         endgame_move = get_endgame_move(board, tb)
@@ -60,17 +71,18 @@ def run_comparison_worker(args):
             current_model = model_white if board.turn == chess.WHITE else model_black
             root = MCTSNode(board.copy())
             mcts_search(root, current_model, simulations=simulations_per_move, mcts_batch_size=mcts_batch_size)
-            move = select_action(root, temperature=0.0)
+            move = select_action(root, temperature=0.0) # W ewaluacji zawsze gramy "chciwie"
 
         if move is None: break
         board.push(move)
 
-    result = board.result()
+    result = board.result(claim_draw=True)
     if result == '1-0': return 1 if a_is_white else -1
     elif result == '0-1': return -1 if a_is_white else 1
     else: return 0
 
 
+# Główna pętla treningowa
 def train_alphazero_style(
     num_iterations=100,
     games_per_iteration=100,
@@ -84,7 +96,14 @@ def train_alphazero_style(
     mcts_batch_size=8,
     pretrained_weights_path=None
 ):
-    replay_buffer = ReplayBuffer(replay_buffer_max)
+    replay_buffer_path = "replay_buffer.pkl"
+    if os.path.exists(replay_buffer_path):
+        print(f"Znaleziono istniejący bufor. Wczytywanie z {replay_buffer_path}...")
+        with open(replay_buffer_path, 'rb') as f:
+            replay_buffer = pickle.load(f)
+        print(f"Bufor wczytany. Aktualny rozmiar: {len(replay_buffer)}")
+    else:
+        replay_buffer = ReplayBuffer(replay_buffer_max)
 
     if os.path.exists(save_path):
         print(f"Kontynuuję trening. Ładowanie istniejącego modelu z {save_path}")
@@ -96,26 +115,13 @@ def train_alphazero_style(
         print("Nie znaleziono żadnych wag. Tworzenie nowego, losowego modelu.")
         best_model = create_chess_model(num_actions=NUM_ACTIONS)
 
-    lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
-        initial_learning_rate=0.001,
-        decay_steps=num_iterations * 5,
-        alpha=0.001
-    )
-    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    
-    best_model.compile(
-        optimizer=optimizer,
-        loss={'policy': 'categorical_crossentropy', 'value': 'mean_squared_error'},
-        loss_weights={'policy': 1.0, 'value': 1.0},
-        jit_compile=False
-    )
 
     for iteration in range(num_iterations):
         print(f"\n=== Iteracja {iteration+1}/{num_iterations} ===")
         print(f"-> Generowanie {games_per_iteration} gier na {num_workers} rdzeniach...")
         
         current_weights = best_model.get_weights()
-        tasks = [(current_weights, simulations_per_move, 1.0, mcts_batch_size, NUM_ACTIONS) for _ in range(games_per_iteration)]
+        tasks = [(current_weights, simulations_per_move, mcts_batch_size, NUM_ACTIONS) for _ in range(games_per_iteration)]
         
         with multiprocessing.Pool(num_workers) as pool:
             results = list(tqdm(pool.imap(run_self_play_worker, tasks), total=len(tasks)))
@@ -133,7 +139,15 @@ def train_alphazero_style(
         candidate_model = tf.keras.models.clone_model(best_model)
         candidate_model.build((None, 8, 8, 12))
         candidate_model.set_weights(best_model.get_weights())
+
+        lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
+        initial_learning_rate=0.001,
+        decay_steps=num_iterations * 5,
+        alpha=0.001
+        )
+        optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
         
+        # Kompilujemy kandydata z tym samym optymalizatorem
         candidate_model.compile(
             optimizer=optimizer,
             loss={'policy': 'categorical_crossentropy', 'value': 'mean_squared_error'},
@@ -141,21 +155,31 @@ def train_alphazero_style(
             jit_compile=False
         )
 
+        # --- SEKCJA Z POPRAWKĄ ---
         all_data = replay_buffer.sample_all() 
         np.random.shuffle(all_data)
         training_data = all_data[:training_batch_size]
+        if not training_data:
+            print("Brak danych treningowych, pomijam krok treningu.")
+            continue
 
         X = np.array([s for (s, p, v) in training_data])
         Y_policy = np.array([p for (s, p, v) in training_data])
-        Y_value = np.array([v for (s, p, v) in training_data]).reshape(-1, 1)
+        Y_value = np.array([v for (s, p, v) in training_data])
+
+        train_dataset = tf.data.Dataset.from_tensor_slices(
+            (X, {"policy": Y_policy, "value": Y_value})
+        )
+
+        BATCH_SIZE_FIT = 256
+        train_dataset = train_dataset.shuffle(buffer_size=len(X)).batch(BATCH_SIZE_FIT)
 
         candidate_model.fit(
-            X,
-            {"policy": Y_policy, "value": Y_value},
-            epochs=1,
-            batch_size=256,
+            train_dataset,
+            epochs=3, # Tutaj zmieniasz liczbę epok
             verbose=1
         )
+        # --- KONIEC SEKCJI Z POPRAWKĄ ---
 
         print(f"-> Porównanie kandydata z best_model w {comparison_games} grach...")
         
@@ -168,7 +192,6 @@ def train_alphazero_style(
             match_results = list(tqdm(pool.imap(run_comparison_worker, eval_tasks), total=len(eval_tasks)))
             
         score_cand = sum(1 for r in match_results if r == 1) + sum(0.5 for r in match_results if r == 0)
-
         total_points = comparison_games
         score_best = total_points - score_cand
         
@@ -184,19 +207,26 @@ def train_alphazero_style(
         else:
             print(f"-> Kandydat odrzucony (ratio: {ratio:.2f}).")
 
+        print("-> Zapisywanie Replay Buffer na dysk...")
+        with open(replay_buffer_path, 'wb') as f:
+            pickle.dump(replay_buffer, f)
+        print("Bufor zapisany.")
+
     return best_model
 
 
 if __name__ == "__main__":
+    # Niezbędne dla multiprocessing w niektórych systemach
     multiprocessing.set_start_method('spawn', force=True)
 
+    # --- KONFIGURACJA HIPERPARAMETRÓW ---
     PRETRAINED_PATH = "lichess_pretrained_model.weights.h5" 
     SAVE_PATH = "alphazero_trained_model_v1.weights.h5"
     
     NUM_ITERATIONS = 100
     GAMES_PER_ITERATION = 120
-    SIMULATIONS_PER_MOVE = 100
-    REPLAY_BUFFER_MAX = 100000
+    SIMULATIONS_PER_MOVE = 200
+    REPLAY_BUFFER_MAX = 400000
     TRAINING_BATCH_SIZE = 4096
     COMPARISON_GAMES = 24
     COMPARISON_THRESHOLD = 0.55

@@ -1,33 +1,41 @@
+# Plik: ai/self_play.py
+# Wersja: Zaktualizowana z dynamiczną temperaturą i poprawioną logiką nagród
+
 import numpy as np
 import chess
 import chess.pgn
 import chess.syzygy
 import os
 import json
+from collections import deque
 import random
 
+# Importujemy istniejące komponenty
 from ai.mcts import MCTSNode, mcts_search, select_action, flip_move
 from ai.utils import encode_board_perspective
 from ai.move_mapping import MOVE_TO_INDEX, NUM_ACTIONS
 from ai.knowledge import get_endgame_move, get_opening_move
 
+# Globalne zmienne dla workerów, aby nie ładować zasobów w każdej grze
 worker_tablebase = None
 worker_opening_book = None
 
-def self_play_game(model, simulations_per_move=200, temperature=1.0, mcts_batch_size=8):
+def self_play_game(model, simulations_per_move=200, temp_threshold=30, mcts_batch_size=8):
+    """
+    Rozgrywa jedną partię sam ze sobą, używając dynamicznej temperatury.
+    `temp_threshold`: Liczba półruchów, po której temperatura spada do zera.
+    """
     global worker_tablebase, worker_opening_book
 
+    # --- Inicjalizacja zasobów (księga, bazy) przy pierwszym uruchomieniu workera ---
     if worker_tablebase is None:
         try:
             path = os.path.join(os.path.dirname(__file__), '..', 'tablebases')
             if os.path.exists(path) and any(f.endswith(('.rtbw', '.rtbz')) for f in os.listdir(path)):
                 worker_tablebase = chess.syzygy.open_tablebase(path)
-                print(f"[PID: {os.getpid()}] Self-play worker załadował bazę zakończeń.")
             else:
-                worker_tablebase = "error" 
-                print(f"[PID: {os.getpid()}] Ostrzeżenie: Folder z bazami zakończeń pusty lub nie istnieje.")
-        except Exception as e:
-            print(f"[PID: {os.getpid()}] Błąd ładowania bazy zakończeń: {e}")
+                worker_tablebase = "error"
+        except Exception:
             worker_tablebase = "error"
 
     if worker_opening_book is None:
@@ -35,90 +43,86 @@ def self_play_game(model, simulations_per_move=200, temperature=1.0, mcts_batch_
             path = os.path.join(os.path.dirname(__file__), 'opening_book.json')
             with open(path, 'r') as f:
                 worker_opening_book = json.load(f)
-            print(f"[PID: {os.getpid()}] Self-play worker załadował księgę otwarć.")
-        except Exception as e:
-            print(f"[PID: {os.getpid()}] Błąd ładowania księgi otwarć: {e}")
+        except Exception:
             worker_opening_book = {}
 
     board = chess.Board()
-    states_actions = []
-
-    while not board.is_game_over():
+    game_history = []
+    
+    # Główna pętla gry
+    while not board.is_game_over(claim_draw=True):
         move = None
-        policy_target = np.zeros(NUM_ACTIONS, dtype=np.float32)
-
+        
+        # --- Hierarchia decyzyjna (księga, bazy) ---
         opening_move = get_opening_move(board, worker_opening_book)
         if opening_move:
             move = opening_move
-            root = MCTSNode(board.copy())
-            mcts_search(root, model, simulations=50, c_puct=1.25, mcts_batch_size=mcts_batch_size)
-            
-            children_items = list(root.children.items())
-            if children_items:
-                visits = np.array([child.visits for (_, child) in children_items], dtype=np.float32)
-                sum_visits = visits.sum()
-                if sum_visits > 0:
-                    for (m, child), v in zip(children_items, visits):
-                        move_for_policy = m if board.turn == chess.WHITE else flip_move(m)
-                        if move_for_policy in MOVE_TO_INDEX:
-                            idx = MOVE_TO_INDEX.get(move_for_policy)
-                            if idx is not None:
-                                policy_target[idx] = v / sum_visits
-
+        
         if move is None:
             if worker_tablebase != "error":
                 endgame_move = get_endgame_move(board, worker_tablebase)
                 if endgame_move:
                     move = endgame_move
-                    move_for_policy = move if board.turn == chess.WHITE else flip_move(move)
+
+        # --- Główna logika MCTS ---
+        # Zapisujemy stan PRZED wykonaniem ruchu
+        state_tensor = encode_board_perspective(board)
+        
+        # Obliczamy politykę (rozkład prawdopodobieństw) z MCTS
+        root = MCTSNode(board.copy())
+        mcts_search(root, model, simulations=simulations_per_move, c_puct=1.25, mcts_batch_size=mcts_batch_size)
+        
+        policy_target = np.zeros(NUM_ACTIONS, dtype=np.float32)
+        children_items = list(root.children.items())
+        if children_items:
+            visits = np.array([child.visits for (_, child) in children_items], dtype=np.float32)
+            sum_visits = visits.sum()
+            if sum_visits > 0:
+                for (m, child), v in zip(children_items, visits):
+                    move_for_policy = m if board.turn == chess.WHITE else flip_move(m)
                     if move_for_policy in MOVE_TO_INDEX:
                         idx = MOVE_TO_INDEX.get(move_for_policy)
                         if idx is not None:
-                            policy_target[idx] = 1.0 
+                            policy_target[idx] = v / sum_visits
         
+        # Jeśli ruch nie został wybrany z księgi/bazy, wybieramy go teraz z MCTS
         if move is None:
-            root = MCTSNode(board.copy())
-            mcts_search(root, model, simulations=simulations_per_move, c_puct=1.25, mcts_batch_size=mcts_batch_size)
-            
-            children_items = list(root.children.items())
-            if children_items:
-                visits = np.array([child.visits for (_, child) in children_items], dtype=np.float32)
-                sum_visits = visits.sum()
-                if sum_visits > 0:
-                    for (m, child), v in zip(children_items, visits):
-                        move_for_policy = m if board.turn == chess.WHITE else flip_move(m)
-                        if move_for_policy in MOVE_TO_INDEX:
-                            idx = MOVE_TO_INDEX.get(move_for_policy)
-                            if idx is not None:
-                                policy_target[idx] = v / sum_visits
-
-            move = select_action(root, temperature)
+            # Wybór temperatury na podstawie liczby ruchów
+            if len(board.move_stack) < temp_threshold:
+                current_temperature = 1.0  # Eksploracja
+            else:
+                current_temperature = 1e-4 # Eksploatacja (bliskie zera)
+            move = select_action(root, current_temperature)
             
         if move is None:
             break
 
-        state_tensor = encode_board_perspective(board)
-        states_actions.append((state_tensor, policy_target))
+        # Zapisujemy parę (stan, polityka) do historii
+        game_history.append((state_tensor, policy_target, board.turn))
         board.push(move)
     
-    result = board.result()
-    if result == '1-0': outcome = 1
-    elif result == '0-1': outcome = -1
-    else: outcome = 0
+    # --- Przypisanie ostatecznego wyniku partii ---
+    result = board.result(claim_draw=True)
+    if result == '1-0': 
+        outcome = 1.0
+    elif result == '0-1': 
+        outcome = -1.0
+    else: 
+        outcome = 0.0
 
+    # Przetwarzamy historię, aby przypisać poprawną wartość (nagrodę) do każdego stanu
     final_data = []
-    current_player_perspective_outcome = 1
-    for (st, pol) in states_actions:
-        val = outcome * current_player_perspective_outcome
-        final_data.append((st, pol, val))
-        current_player_perspective_outcome *= -1
+    for state, policy, turn in game_history:
+        # Jeśli ruch wykonywały białe (turn == chess.WHITE), to wynik jest `outcome`
+        # Jeśli ruch wykonywały czarne (turn == chess.BLACK), to wynik jest `-outcome`
+        value = outcome if turn == chess.WHITE else -outcome
+        final_data.append((state, policy, value))
 
     return final_data
 
 
 class ReplayBuffer:
     def __init__(self, max_size=50000):
-        from collections import deque
         self.buffer = deque(maxlen=max_size)
 
     def add_samples(self, samples):
@@ -135,6 +139,11 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
+
+# Poniższe funkcje `play_single_game` i `play_match` nie są używane
+# w pętli `train_alphazero_style.py`, ale mogą być przydatne do innych celów,
+# więc można je zostawić lub usunąć dla przejrzystości.
+
 def play_single_game(model_white, model_black, simulations_per_move=100):
     tb = None
     try:
@@ -145,7 +154,7 @@ def play_single_game(model_white, model_black, simulations_per_move=100):
         pass
 
     board = chess.Board()
-    while not board.is_game_over():
+    while not board.is_game_over(claim_draw=True):
         move = None
         endgame_move = get_endgame_move(board, tb)
         if endgame_move:
@@ -164,7 +173,7 @@ def play_single_game(model_white, model_black, simulations_per_move=100):
             break
         board.push(move)
 
-    result = board.result()
+    result = board.result(claim_draw=True)
     if result == '1-0':
         return 1
     elif result == '0-1':

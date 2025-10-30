@@ -1,16 +1,22 @@
 import numpy as np
 import chess
 
+# Importujemy istniejące komponenty
 from ai.utils import encode_board_perspective
 from ai.move_mapping import MOVE_TO_INDEX, NUM_ACTIONS
 
 
 def flip_move(move: chess.Move) -> chess.Move:
+    """
+    Odwraca ruch, aby był poprawny z perspektywy przeciwnego gracza.
+    Używa wbudowanej, niezawodnej funkcji z biblioteki python-chess.
+    """
     return chess.Move(
         from_square=chess.square_mirror(move.from_square),
         to_square=chess.square_mirror(move.to_square),
         promotion=move.promotion
     )
+
 
 class MCTSNode:
     def __init__(self, state: chess.Board, parent=None):
@@ -24,7 +30,7 @@ class MCTSNode:
         self.virtual_loss = 0
 
     def is_terminal(self):
-        return self.state.is_game_over()
+        return self.state.is_game_over(claim_draw=True)
 
     def value(self):
         return self.value_sum / self.visits if self.visits > 0 else 0
@@ -80,10 +86,12 @@ class MCTSNode:
         self.visits += 1
         self.value_sum += value
 
+
 def select_child(node: MCTSNode, c_puct=1.0):
     best_score = -999999
     best_move, best_child = None, None
 
+    # Dodajemy małą stałą, aby uniknąć dzielenia przez zero przy pierwszym węźle
     sqrtN_parent = np.sqrt(node.visits + 1e-8)
 
     for move, child in node.children.items():
@@ -94,13 +102,16 @@ def select_child(node: MCTSNode, c_puct=1.0):
             best_score = score
             best_move = move
             best_child = child
+            
     return best_move, best_child
+
 
 def backpropagate(path, value):
     for node in reversed(path):
         node.update(value)
         node.virtual_loss -= 1 
-        value = -value
+        value = -value # Wynik jest odwracany dla perspektywy drugiego gracza
+
 
 def mcts_search(root: MCTSNode, model, simulations=1600, c_puct=1.0, mcts_batch_size=8):
     for _ in range(simulations // mcts_batch_size):
@@ -123,16 +134,25 @@ def mcts_search(root: MCTSNode, model, simulations=1600, c_puct=1.0, mcts_batch_
                 leaf_nodes_to_expand.append(node)
                 paths.append(path)
             else:
-                result = node.state.result()
+                result = node.state.result(claim_draw=True)
                 if result == '1-0': value = 1
                 elif result == '0-1': value = -1
                 else: value = 0
+                
+                # Propagujemy wynik z perspektywy gracza, który ma ruch w końcowym węźle
+                if node.state.turn == chess.BLACK:
+                    value = -value
+                    
                 backpropagate(path, value)
 
         if not leaf_nodes_to_expand:
             continue
 
         states_batch = np.array([encode_board_perspective(n.state) for n in leaf_nodes_to_expand])
+        
+        if not states_batch.any():
+            continue
+            
         policy_batch, value_batch = model.predict(states_batch, verbose=0)
 
         for i, leaf_node in enumerate(leaf_nodes_to_expand):
@@ -142,17 +162,45 @@ def mcts_search(root: MCTSNode, model, simulations=1600, c_puct=1.0, mcts_batch_
             leaf_node.expand(policy_logits)
             backpropagate(paths[i], value_pred)
 
+
 def select_action(root: MCTSNode, temperature=1.0):
+    """
+    Wybiera ruch z węzła-korzenia na podstawie liczby odwiedzin.
+    Jest numerycznie stabilna dla niskich temperatur.
+    """
     if not root.children:
         return None
-    visits = np.array([child.visits for child in root.children.values()], dtype=np.float32)
+        
     moves = list(root.children.keys())
+    visits = np.array([child.visits for child in root.children.values()], dtype=np.float32)
 
-    if temperature < 1e-6:
+    # Sprawdzamy, czy temperatura jest na tyle niska, że należy wybrać ruch "chciwie" (greedy)
+    # Próg 1e-3 jest bezpieczny dla temperatury 1e-4.
+    if temperature < 1e-3:
+        # Wybieramy indeks ruchu z maksymalną liczbą odwiedzin
         idx = np.argmax(visits)
         return moves[idx]
     else:
-        visits = np.power(visits, 1.0 / temperature)
-        probs = visits / visits.sum()
+        # Logika probabilistyczna dla eksploracji
+        
+        # Aby uniknąć problemów numerycznych z np.power, gdy temperature=1.0,
+        # po prostu normalizujemy same wizyty, co jest matematycznie równoważne.
+        if np.isclose(temperature, 1.0):
+            probs = visits / visits.sum()
+        else:
+            # Ta operacja jest numerycznie niestabilna dla BARDZO małych temperatur,
+            # dlatego obsłużyliśmy je w warunku `if` powyżej.
+            visits_pow = np.power(visits, 1.0 / temperature)
+            probs = visits_pow / visits_pow.sum()
+
+        # Sprawdzenie, czy nie powstały wartości NaN
+        if np.isnan(probs).any():
+            # Sytuacja awaryjna: jeśli mamy NaN, wybierzmy ruch z maks. wizyt
+            # i poinformujmy o tym użytkownika.
+            print(f"Ostrzeżenie: Wykryto NaN w prawdopodobieństwach (wizyty: {visits}). Wybieram ruch 'chciwie'.")
+            idx = np.argmax(visits)
+            return moves[idx]
+
+        # Wybór losowy z wagami (prawdopodobieństwami)
         idx = np.random.choice(len(moves), p=probs)
         return moves[idx]

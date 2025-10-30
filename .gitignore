@@ -175,3 +175,6 @@ cython_debug/
 /tf-env 
 /tablebases
 lichess_final_filtered.pgn
+
+*.npz
+*.pkl

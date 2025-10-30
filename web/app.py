@@ -114,7 +114,7 @@ def ai_move():
     if best_move is None:
         print("[AI] Uruchamiam przeszukiwanie MCTS...")
         root = MCTSNode(board.copy())
-        mcts_search(root, model, simulations=200, c_puct=1.25, mcts_batch_size=16) 
+        mcts_search(root, model, simulations=800, c_puct=2.5, mcts_batch_size=16) 
         best_move = select_action(root, temperature=0)
 
     if best_move is None:
