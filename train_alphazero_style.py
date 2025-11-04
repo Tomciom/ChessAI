@@ -92,7 +92,7 @@ def train_alphazero_style(
     comparison_games=20,
     comparison_threshold=0.55,
     save_path="best_model.weights.h5",
-    num_workers=max(1, multiprocessing.cpu_count() - 2),
+    num_workers=max(1, multiprocessing.cpu_count() - 4),
     mcts_batch_size=8,
     pretrained_weights_path=None
 ):
@@ -176,7 +176,7 @@ def train_alphazero_style(
 
         candidate_model.fit(
             train_dataset,
-            epochs=3, # Tutaj zmieniasz liczbę epok
+            epochs=7, # Tutaj zmieniasz liczbę epok
             verbose=1
         )
         # --- KONIEC SEKCJI Z POPRAWKĄ ---
@@ -208,9 +208,15 @@ def train_alphazero_style(
             print(f"-> Kandydat odrzucony (ratio: {ratio:.2f}).")
 
         print("-> Zapisywanie Replay Buffer na dysk...")
-        with open(replay_buffer_path, 'wb') as f:
-            pickle.dump(replay_buffer, f)
-        print("Bufor zapisany.")
+        temp_replay_buffer_path = replay_buffer_path + ".tmp"
+        try:
+            with open(temp_replay_buffer_path, 'wb') as f:
+                pickle.dump(replay_buffer, f)
+            # Jeśli zapis się udał, zamieniamy stary plik na nowy
+            os.replace(temp_replay_buffer_path, replay_buffer_path)
+            print("Bufor zapisany pomyślnie.")
+        except Exception as e:
+            print(f"BŁĄD podczas zapisywania bufora: {e}")
 
     return best_model
 
@@ -225,13 +231,12 @@ if __name__ == "__main__":
     
     NUM_ITERATIONS = 100
     GAMES_PER_ITERATION = 120
-    SIMULATIONS_PER_MOVE = 200
-    REPLAY_BUFFER_MAX = 400000
+    SIMULATIONS_PER_MOVE = 1600
+    REPLAY_BUFFER_MAX = 150000
     TRAINING_BATCH_SIZE = 4096
     COMPARISON_GAMES = 24
     COMPARISON_THRESHOLD = 0.55
-    NUM_WORKERS = 6
-    MCTS_BATCH_SIZE = 16
+    MCTS_BATCH_SIZE = 64
 
     final_model = train_alphazero_style(
         num_iterations=NUM_ITERATIONS,
@@ -243,6 +248,5 @@ if __name__ == "__main__":
         comparison_threshold=COMPARISON_THRESHOLD,
         save_path=SAVE_PATH,
         pretrained_weights_path=PRETRAINED_PATH,
-        num_workers=NUM_WORKERS,
         mcts_batch_size=MCTS_BATCH_SIZE
     )

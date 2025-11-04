@@ -1,6 +1,3 @@
-# Plik: ai/self_play.py
-# Wersja: Zaktualizowana z dynamiczną temperaturą i poprawioną logiką nagród
-
 import numpy as np
 import chess
 import chess.pgn
@@ -16,18 +13,17 @@ from ai.utils import encode_board_perspective
 from ai.move_mapping import MOVE_TO_INDEX, NUM_ACTIONS
 from ai.knowledge import get_endgame_move, get_opening_move
 
-# Globalne zmienne dla workerów, aby nie ładować zasobów w każdej grze
+# Globalne zmienne dla workerów
 worker_tablebase = None
 worker_opening_book = None
 
 def self_play_game(model, simulations_per_move=200, temp_threshold=30, mcts_batch_size=8):
     """
-    Rozgrywa jedną partię sam ze sobą, używając dynamicznej temperatury.
-    `temp_threshold`: Liczba półruchów, po której temperatura spada do zera.
+    Rozgrywa jedną partię sam ze sobą, używając dynamicznej temperatury i Szumu Dirichleta.
     """
     global worker_tablebase, worker_opening_book
 
-    # --- Inicjalizacja zasobów (księga, bazy) przy pierwszym uruchomieniu workera ---
+    # --- Inicjalizacja zasobów ---
     if worker_tablebase is None:
         try:
             path = os.path.join(os.path.dirname(__file__), '..', 'tablebases')
@@ -40,7 +36,8 @@ def self_play_game(model, simulations_per_move=200, temp_threshold=30, mcts_batc
 
     if worker_opening_book is None:
         try:
-            path = os.path.join(os.path.dirname(__file__), 'opening_book.json')
+            # Poprawiona ścieżka do księgi otwarć, aby była spójna z resztą
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'opening_book.json')
             with open(path, 'r') as f:
                 worker_opening_book = json.load(f)
         except Exception:
@@ -65,12 +62,15 @@ def self_play_game(model, simulations_per_move=200, temp_threshold=30, mcts_batc
                     move = endgame_move
 
         # --- Główna logika MCTS ---
-        # Zapisujemy stan PRZED wykonaniem ruchu
         state_tensor = encode_board_perspective(board)
         
-        # Obliczamy politykę (rozkład prawdopodobieństw) z MCTS
         root = MCTSNode(board.copy())
-        mcts_search(root, model, simulations=simulations_per_move, c_puct=1.25, mcts_batch_size=mcts_batch_size)
+
+        # --- ZMIANA: WŁĄCZENIE SZUMU DIRICHLETA ---
+        # Używamy flagi `add_dirichlet_noise=True` tylko w fazie samorozgrywki
+        mcts_search(root, model, simulations=simulations_per_move, c_puct=1.25, 
+                    mcts_batch_size=mcts_batch_size, add_dirichlet_noise=True)
+        # --- KONIEC ZMIANY ---
         
         policy_target = np.zeros(NUM_ACTIONS, dtype=np.float32)
         children_items = list(root.children.items())
@@ -85,23 +85,20 @@ def self_play_game(model, simulations_per_move=200, temp_threshold=30, mcts_batc
                         if idx is not None:
                             policy_target[idx] = v / sum_visits
         
-        # Jeśli ruch nie został wybrany z księgi/bazy, wybieramy go teraz z MCTS
         if move is None:
-            # Wybór temperatury na podstawie liczby ruchów
             if len(board.move_stack) < temp_threshold:
-                current_temperature = 1.0  # Eksploracja
+                current_temperature = 1.0
             else:
-                current_temperature = 1e-4 # Eksploatacja (bliskie zera)
+                current_temperature = 1e-4
             move = select_action(root, current_temperature)
             
         if move is None:
             break
 
-        # Zapisujemy parę (stan, polityka) do historii
         game_history.append((state_tensor, policy_target, board.turn))
         board.push(move)
     
-    # --- Przypisanie ostatecznego wyniku partii ---
+    # --- Przypisanie wyniku ---
     result = board.result(claim_draw=True)
     if result == '1-0': 
         outcome = 1.0
@@ -110,11 +107,8 @@ def self_play_game(model, simulations_per_move=200, temp_threshold=30, mcts_batc
     else: 
         outcome = 0.0
 
-    # Przetwarzamy historię, aby przypisać poprawną wartość (nagrodę) do każdego stanu
     final_data = []
     for state, policy, turn in game_history:
-        # Jeśli ruch wykonywały białe (turn == chess.WHITE), to wynik jest `outcome`
-        # Jeśli ruch wykonywały czarne (turn == chess.BLACK), to wynik jest `-outcome`
         value = outcome if turn == chess.WHITE else -outcome
         final_data.append((state, policy, value))
 
@@ -138,6 +132,7 @@ class ReplayBuffer:
 
     def __len__(self):
         return len(self.buffer)
+
 
 
 # Poniższe funkcje `play_single_game` i `play_match` nie są używane
